@@ -1,0 +1,755 @@
+---
+title: "Homework 3"
+author: "Kavya Malgi"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      eval = TRUE, 
+                      warning = FALSE,
+                      message = FALSE,
+                      fig.align = "center", 
+                      R.options = list(max.print=50))
+```
+
+# **Problem 1**
+
+**Which of these theories seem true, and which are unsupported by data? Take each theory one by one and assess the evidence for the theory in this data set.**
+
+**A)**
+
+***Claim: Gas stations charge more if they lack direct competition in sight.***
+
+***Evidence:***
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(rvest)
+library(sas7bdat)
+library(knitr)
+library(tibble)
+library(boot)
+
+gas <- read.csv("gasprices.csv")
+
+#make sure that Y = yes and N = No
+gas$Competitors <- factor(gas$Competitors, levels = c("N", "Y"), labels = c("No Competitors", "Competitors"))
+
+
+ggplot(data = gas) +
+  geom_histogram(aes(x = Price), bins = 20, color = "black", fill = "steelblue") +
+  facet_wrap(~ Competitors) +
+  labs(
+    title = "Gas Station Prices: No Competitors vs Competitors",
+    x = "Price ($)",
+    y = "Count"
+  )
+
+# calculate means
+mean_prices <- gas |>
+  group_by(Competitors) |>
+  summarize(price_mean = mean(Price, na.rm = TRUE))
+
+boot_diff <- function(data, indices) {
+  sample_data <- data[indices, ]
+  
+  mean_no_comp <- mean(sample_data$Price[sample_data$Competitors == "No Competitors"], na.rm = TRUE)
+  
+  mean_comp <- mean(sample_data$Price[sample_data$Competitors == "Competitors"], na.rm = TRUE)
+  
+  if (is.na(mean_no_comp) | is.na(mean_comp)) {
+    return(NA) 
+  } else {
+    return(mean_no_comp - mean_comp)  
+  }
+}
+
+set.seed(123)
+bootstrap_results <- boot(data = gas, statistic = boot_diff, R = 10000)
+
+boot_ci <- boot.ci(bootstrap_results, type = "perc")
+
+if (!is.null(boot_ci$percent)) {
+  ci_lower <- boot_ci$percent[4]  
+  ci_upper <- boot_ci$percent[5]
+} else {
+  print(boot_ci)  # Print output if NULL
+  ci_lower <- NA
+  ci_upper <- NA
+}
+
+mean_diff <- mean(bootstrap_results$t, na.rm = TRUE)  
+
+
+
+comp_table <- tibble(
+  Description = c(
+    "Mean Price w/o Competitors",
+    "Mean Price w/ Competitors",
+    "Difference in Means",
+    "Lower Bound of CI",
+    "Upper Bound of CI"
+    
+  ),
+  Result = c(
+    mean_prices$price_mean[mean_prices$Competitors == "No Competitors"],
+    mean_prices$price_mean[mean_prices$Competitors == "Competitors"],
+    mean_diff, 
+    ci_lower,
+    ci_upper
+  )
+)
+
+# Print table with correct column names
+kable(comp_table, col.names = c("Description", "Result"),
+      caption = "T-test Stats: Gas Station Prices with No Competitors vs Competitors in Sight")
+
+hist(bootstrap_results$t, main = "Bootstrap Distribution of Mean Price Difference",
+     xlab = "Bootstrapped Mean Differences", breaks = 30, col = "darkblue", border = "black")
+
+```
+
+***Conclusion:***
+
+After analysis, I found that there is a *moderate* *positive association* between income levels and gas prices. The bootstrapped confidence interval for the relationship did not include 0. This highlights the fact that there is a statistically significant correlation indicating that gas stations in wealthier areas tend to charge more for gas (corr coeff is 0.396).
+
+\newpage
+
+**B)**
+
+***Claim: The richer the area, the higher the gas prices.***
+
+***Evidence:***
+
+```{r}
+
+correlation <- cor(gas$Income, gas$Price, use = "complete.obs")
+#print(paste("Correlation between Income and Gas Price:", round(correlation, 3)))
+
+ggplot(gas, aes(x = Income, y = Price)) +
+  geom_point(alpha = 0.5, fill = "steelblue") +
+  geom_smooth(method = "lm", se = TRUE, color = "darkblue") +
+  labs(title = "Gas Prices vs. Median Income",
+       x = "Median Household Income ($)",
+       y = "Gas Price ($)") 
+
+
+
+
+gas_summary <- gas %>%
+  summarise(
+    Mean_Price = mean(Price, na.rm = TRUE),
+    Median_Price = median(Price, na.rm = TRUE),
+    SD_Price = sd(Price, na.rm = TRUE),
+    Min_Price = min(Price, na.rm = TRUE),
+    Max_Price = max(Price, na.rm = TRUE),
+    Correlation_Income_Price = cor(Income, Price, use = "complete.obs")
+  )
+
+# Display the summary statistics as a table
+kable(gas_summary, caption = "Summary Statistics for Gas Prices and Income")
+```
+
+***Conclusion:***
+
+The mean gas price across all stations is \$1.86, with a standard dev of \$.08. If the gas stations located near stoplights consistently exhibit higher-than-average prices, the claim is supported.
+
+\newpage
+
+**C)**
+
+***Claim: Gas stations at stoplights charge more.***
+
+***Evidence:***
+
+```{r}
+
+
+gas$Stoplight <- factor(gas$Stoplight, levels = c("N", "Y"), labels = c("No Stoplight", "Stoplight"))
+
+
+stop_summary <- gas |>
+  group_by(Stoplight) |>
+  summarize(
+    Mean = mean(Price, na.rm = TRUE),
+    Median = median(Price, na.rm = TRUE),
+    SD = sd(Price, na.rm = TRUE),
+    Min = min(Price, na.rm = TRUE),
+    Max = max(Price, na.rm = TRUE),
+    Count = n()
+  )
+
+kable(stop_summary, caption = "Sumamry Statistics for Gas Prices Based on Stoplight Presence")
+
+ggplot(gas, aes(x = Stoplight, y = Price, fill = Stoplight)) +
+  geom_boxplot() +
+  labs(
+    title = "Stoplights vs No Stoplights",
+    x = "Stoplight Presence",
+    y = "Gas Price ($)"
+  ) +
+  scale_fill_manual(values = c("steelblue", "darkblue"))
+
+boot_diff_means <- function(data, indices) {
+  sample_data <- data[indices, ] 
+  mean_stoplight <- mean(sample_data$Price[sample_data$Stoplight == "Stoplight"], na.rm = TRUE)
+  mean_no_stoplight <- mean(sample_data$Price[sample_data$Stoplight == "No Stoplight"], na.rm = TRUE)
+  return(mean_stoplight - mean_no_stoplight) 
+}
+
+boot_ci <- boot.ci(bootstrap_results, type = "perc")
+
+ci_lower <- boot_ci$percent[4]  
+ci_upper <- boot_ci$percent[5] 
+mean_diff <- mean(bootstrap_results$t, na.rm = TRUE)  
+
+boot_table <- tibble(
+  Description = c(
+    "Mean Price at Stoplight",
+    "Mean Price without Stoplight",
+    "Bootstrapped Difference in Means",
+    "Lower Bound of Confidence Interval",
+    "Upper Bound of Confidence Interval"
+  ),
+  Result = c(
+    stop_summary$Mean[stop_summary$Stoplight == "Stoplight"],
+    stop_summary$Mean[stop_summary$Stoplight == "No Stoplight"],
+    mean_diff,
+    ci_lower,
+    ci_upper
+  )
+)
+
+
+
+
+kable(boot_table, digits = 4, caption = "Bootstrap Results")
+
+# Plot histogram of bootstrap results
+hist(bootstrap_results$t, main = "Bootstrap Distribution ",
+     xlab = "Bootstrapped Mean Differences", breaks = 30, col = "darkblue", border = "black")
+
+```
+
+***Conclusion:***
+
+If highway-access stations have a mean price significantly above \$1.86 with a confidence interval excluding 0, it would indicate that highway-access gas stations charge more.
+
+\newpage
+
+**D)**
+
+***Claim: Gas stations with direct highway access charge more.***
+
+***Evidence:***
+
+```{r}
+gas$Price <- as.numeric(gas$Price)
+gas$Highway <- factor(gas$Highway, levels = c("N", "Y"), labels = c("No Highway Access", "Highway Access"))
+
+
+highway_summary <- gas %>%
+  group_by(Highway) %>%
+  summarize(
+    Mean = mean(Price, na.rm = TRUE),
+    Median = median(Price, na.rm = TRUE),
+    SD = sd(Price, na.rm = TRUE),
+    Min = min(Price, na.rm = TRUE),
+    Max = max(Price, na.rm = TRUE),
+    Count = n()
+  )
+
+kable(highway_summary, caption = "Summary Statistics")
+
+ggplot(gas, aes(x = Highway, y = Price, fill = Highway)) +
+  geom_boxplot() +
+  labs(
+    title = "Highway Access vs No Highway Access",
+    x = "Highway Access",
+    y = "Gas Price ($)"
+  ) +
+  scale_fill_manual(values = c("steelblue", "darkblue"))
+
+
+boot_diff <- function(data, indices) {
+  sample_data <- data[indices, ] 
+  mean_highway <- mean(sample_data$Price[sample_data$Highway == "Highway Access"], na.rm = TRUE)
+  mean_no_highway <- mean(sample_data$Price[sample_data$Highway == "No Highway Access"], na.rm = TRUE)
+  return(mean_highway - mean_no_highway)  
+}
+
+boot_ci <- boot.ci(bootstrap_results, type = "perc")
+ci_lower <- boot_ci$percent[4]  
+ci_upper <- boot_ci$percent[5]  
+mean_diff <- mean(bootstrap_results$t, na.rm = TRUE)  
+
+
+
+boot_table <- tibble(
+  Description = c(
+    "Mean Price with Highway Access",
+    "Mean Price without Highway Access",
+    "Bootstrapped Difference in Means",
+    "Lower Bound of Confidence Interval",
+    "Upper Bound of Confidence Interval"
+  ),
+  Result = c(
+    highway_summary$Mean[highway_summary$Highway == "Highway Access"],
+    highway_summary$Mean[highway_summary$Highway == "No Highway Access"],
+    mean_diff,
+    ci_lower,
+    ci_upper
+  )
+)
+
+kable(boot_table, digits = 4, caption = "Bootstrap Results")
+
+hist(bootstrap_results$t, main = "Bootstrap Distribution of Mean Price Difference",
+     xlab = "Bootstrapped Mean Differences", breaks = 30, col = "steelblue", border = "black")
+
+
+```
+
+***Conclusion:***
+
+For this claim to be true, the mean gas price for stations without competitors should be higher than for those with competitors. The difference in means is \$.0457. The confidence interval is ( \$-.0084, .0550 ). Since the confidence interval includes 0, there is no strong statistical evidence that gas stations with highway access charge significantly more.
+
+\newpage
+
+**E)**
+
+***Claim: Shell charges more than all other non-Shell brands.***
+
+***Evidence:***
+
+```{r}
+
+# Convert Brand into "Shell" vs. "Non-Shell"
+gas$Brand <- ifelse(gas$Brand == "Shell", "Shell", "Non-Shell")
+
+# Convert Brand to a factor
+gas$Brand <- factor(gas$Brand, levels = c("Non-Shell", "Shell"))
+
+# Check if Brand column has exactly two levels
+table(gas$Brand, useNA = "ifany")
+
+
+#print(t_test_result)
+
+brand_summary <- gas %>%
+  group_by(Brand) %>%
+  summarize(
+    Mean = mean(Price, na.rm = TRUE),
+    Median = median(Price, na.rm = TRUE),
+    SD = sd(Price, na.rm = TRUE),
+    Min = min(Price, na.rm = TRUE),
+    Max = max(Price, na.rm = TRUE),
+    Count = n()
+  )
+kable(brand_summary, caption = "Summary Statistics for Gas Prices Based on Brand (Shell vs. Non-Shell)")
+
+ggplot(gas, aes(x = Brand, y = Price, fill = Brand)) +
+  geom_boxplot() +
+  labs(
+    title = "Gas Prices: Shell vs Non-Shell",
+    x = "Brand",
+    y = "Gas Price ($)"
+  ) +
+  scale_fill_manual(values = c("steelblue", "darkblue"))
+
+boot_diff<- function(data, indices) {
+  sample_data <- data[indices, ]  
+  mean_shell <- mean(sample_data$Price[sample_data$Brand == "Shell"], na.rm = TRUE)
+  mean_non_shell <- mean(sample_data$Price[sample_data$Brand == "Non-Shell"], na.rm = TRUE)
+  return(mean_shell - mean_non_shell)
+}
+
+
+boot_ci <- boot.ci(bootstrap_results, type = "perc")
+ci_lower <- boot_ci$percent[4] 
+ci_upper <- boot_ci$percent[5]  
+mean_diff <- mean(bootstrap_results$t, na.rm = TRUE)  
+
+
+boot_table <- tibble(
+  Description = c(
+    "Mean Price at Shell",
+    "Mean Price at Non-Shell",
+    "Bootstrapped Difference in Means",
+    "Lower Bound of Confidence Interval",
+    "Upper Bound of Confidence Interval"
+  ),
+  Result = c(
+    brand_summary$Mean[brand_summary$Brand == "Shell"],
+    brand_summary$Mean[brand_summary$Brand == "Non-Shell"],
+    mean_diff,
+    ci_lower,
+    ci_upper
+  )
+)
+
+
+kable(boot_table, digits = 4, caption = "Bootstrap Results")
+
+hist(bootstrap_results$t, main = "Bootstrap Distribution",
+     xlab = "Bootstrapped Mean Differences", breaks = 30, col = "darkblue", border = "black")
+
+```
+
+***Conclusion:***
+
+Since the confidence interval includes 0, there is no strong statistical evidence that Shell stations charge significantly more than non-shell stations. While the price difference(.0236 per gal) suggests Shell charges slightly more, the effect is not statistically significant.
+
+\newpage
+
+# **Problem 2**
+
+**Part A: Filter the data set down to include only those cars where year == 2011 and trim == "63 AMG". Based on these 116 cars, compute a 95% bootstrap confidence interval for the average mileage of 2011 S-Class 63 AMGs that were hitting the used-car market when this data was collected.**
+
+```{r}
+
+s_class <- read.csv("sclass.csv")
+
+specific1 <- s_class |>
+  filter(year == 2011, trim == "63 AMG")|>
+  select(mileage)
+
+boot_mileage <- function(data, indices) {
+  return(mean(data$mileage[indices], na.rm = TRUE))  # Compute mean from resampled data
+}
+
+
+set.seed(123)
+bootstrap <- boot(data =specific1, statistic = boot_mileage, R = 10000)
+summary(bootstrap$t)
+boot_ci <- boot.ci(bootstrap, type = "perc")
+
+hist(bootstrap$t, main = "Bootstrap Distribution", xlab = "Bootstrapped Means", breaks = 30, col = "steelblue", border = "black")
+
+
+ci_lower <- boot_ci$percent[4]  
+ci_upper <- boot_ci$percent[5]  
+mean_boot <- mean(bootstrap$t, na.rm = TRUE)  
+
+boot_table <- data.frame(
+  Statistic = c("Bootstrapped Mean Mileage", "95% CI Lower Bound", "95% CI Upper Bound"),
+  Value = c(mean_boot, ci_lower, ci_upper)
+)
+
+kable(boot_table, digits = 2, caption = "95% Bootstrap Confidence Interval for Mileage (2011 S-Class 63 AMG)")
+
+```
+
+***Explanation:***
+
+The bootstrapped mean mileage of 29,011.75 miles suggests that most 2011 S-Class 63 AMG cars available for resale had moderate mileage. The lower bound(26,334.61 miles) suggests that even the lowest expected mileage in this sample is relatively high, indicating that these cars were driven extensively before resale. The upper bound (31,861.28 miles) shows that some high-mileage examples were also available.
+
+\newpage
+
+**Part B: Filter the data set down to include only those cars where year == 2014 and trim == "550". Based\
+on this sample of 2889 cars, compute a 95% bootstrap confidence interval for the proportion of all 2014\
+S-Class 550s that were painted black. Hint: you might find this easiest if you use mutate to first define a new\
+variable, isBlack, that is either TRUE or FALSE depending on whether the car is black.**
+
+```{r}
+
+specific2 <- s_class |>
+  filter(year == 2014, trim == "550")|>
+  mutate(isBlack = as.numeric(color == "Black"))
+
+boot_color <- function(data, indices) {
+  sample_data <- data[indices, ]
+  return(mean(sample_data$isBlack, na.rm = TRUE))  # Compute mean from resampled data
+}
+
+set.seed(123)
+bootstrap_results <- boot(data = specific2, statistic = boot_color, R = 10000)
+
+boot_ci <- boot.ci(bootstrap_results, type = "perc")
+ci_lower <- boot_ci$percent[4]  
+ci_upper <- boot_ci$percent[5]  
+mean_boot <- mean(bootstrap_results$t, na.rm = TRUE)
+
+boot_table <- data.frame(
+  Statistic = c("Bootstrapped Proportion of Black Cars", "95% CI Lower Bound", "95% CI Upper Bound"),
+  Value = c(mean_boot, ci_lower, ci_upper)
+)
+kable(boot_table, digits = 4, caption = "95% Bootstrap Confidence Interval for Proportion of Black 2014 S-Class 550s")
+
+
+hist(bootstrap$t, main = "Bootstrap Distribution", xlab = "Bootstrapped Means", breaks = 30, col = "darkblue", border = "black")
+```
+
+***Explanation:***
+
+The bootstrapped mean proportion (43.49%) suggests that nearly half of all 2014 S-Class 550 cars on the market were black. The lower bound (41.68%) and upper bound (45.28%) show that black is a dominant color choice, but it does not exceed 50%, meaning other colors were also popular. Given that black is often associated with luxury vehicles, this result is expected, but it also confirms that a significant percentage of buyers chose other colors.
+
+\newpage
+
+# **Problem 3**
+
+**Part A: Consider the shows “Living with Ed” and “My Name is Earl.” Who makes people happier: Ed or Earl? Construct a filtered data set containing only viewer responses where Show == "Living with Ed" or Show == "My Name is Earl". Then construct a 95% confidence interval for the difference in mean viewer response to the Q1_Happy question for these two shows. Is there evidence that one show consistently produces a higher mean Q1_Happy response among viewers?**
+
+```{r}
+
+nbc <- read.csv("nbc_pilotsurvey.csv")
+
+filter <- nbc |>
+  filter(Show == "Living with Ed" | Show == "My Name is Earl") |>
+  select(Show, Q1_Happy)|>
+  drop_na(Q1_Happy)
+  
+filter$Show <- factor(filter$Show, levels = c("Living with Ed", "My Name is Earl"))
+
+boot_diff <- function(data, indices) {
+  sample_data <- data[indices, ]  
+  mean_ed <- mean(sample_data$Q1_Happy[sample_data$Show == "Living with Ed"], na.rm = TRUE)
+  mean_earl <- mean(sample_data$Q1_Happy[sample_data$Show == "My Name is Earl"], na.rm = TRUE)
+  return(mean_ed - mean_earl)  
+}
+
+
+boot_ci <- boot.ci(bootstrap_results, type = "perc")
+
+ci_lower <- boot_ci$percent[4]  
+ci_upper <- boot_ci$percent[5]  
+mean_diff <- mean(bootstrap_results$t, na.rm = TRUE)
+
+boot_table <- data.frame(
+  Statistic = c("Bootstrapped Mean Diff", "95% CI Lower Bound", "95% CI Upper Bound"),
+  Value = c(mean_diff, ci_lower, ci_upper)
+)
+kable(boot_table, digits = 4, caption = "95% Bootstrap Confidence Interval")
+
+hist(bootstrap_results$t, 
+     main = "Bootstrap Distribution of Mean Difference", 
+     xlab = "Bootstrapped Mean Differences", 
+     breaks = 30,
+     col = "steelblue", 
+     border = "black")
+```
+
+***1) Question: What question are you trying to answer?***
+
+I want to determine whether viewers rated "Living with Ed" or "My Name is Earl" higher on the Q1_Happy scale.***\
+***
+
+***2) Approach: What approach/statistical tool did you use to answer the question?***
+
+I used bootstrapping to estimate a 95% confidence interval for the difference in mean Q1_Happy ratings between the two shows.
+
+***\
+3) Results: What evidence/results did your approach provide to answer the question? (E.g. any numbers, tables, figures as appropriate.) Make sure to include appropriate measures of uncertainty!***
+
+The bootstrapped mean difference in happiness ratings was .1498, with a 95% confidence interval of (-.1025, .4020). Since the confidence interval includes 0 there is no statistically significant evidence that one show made viewers consistently happier than the other.
+
+***\
+4) Conclusion: What is your conclusion about your question? Provide a written interpretation of your\
+results, understandable to stakeholders who might plausibly take an interest in this data set***
+
+While "Living with Ed" had a slightly higher average happiness rating than "My Name is Earl," the difference is not statistically significant. Shows that both shows produced similar happiness responses among viewers.
+
+\newpage
+
+**Part B: Consider the shows “The Biggest Loser” and “The Apprentice: Los Angeles.” Which reality/contest show made people feel more annoyed? Construct a filtered data set containing only viewer responses where Show == "The Biggest Loser" or Show == "The Apprentice: Los Angeles". Then construct a 95% confidence interval for the difference in mean viewer response to the Q1_Annoyed question for these two shows. Is there evidence that one show consistently produces a higher mean Q1_Annoyed response among viewers?**
+
+```{r}
+filter_data <- nbc |>
+  filter(Show == "The Biggest Loser" | Show == "The Apprentice: Los Angeles") |>
+  select(Show, Q1_Annoyed) |>
+  drop_na(Q1_Annoyed)
+
+
+filter_data$Show <- factor(filter_data$Show, levels = c("The Biggest Loser", "The Apprentice: Los Angeles"))
+
+boot_diff <- function(data, indices) {
+  sample_data <- data[indices, ] 
+  mean_loser <- mean(sample_data$Q1_Annoyed[sample_data$Show == "The Biggest Loser"], na.rm = TRUE)
+  mean_apprentice <- mean(sample_data$Q1_Annoyed[sample_data$Show == "The Apprentice: Los Angeles"], na.rm = TRUE)
+  return(mean_loser - mean_apprentice)  
+}
+
+
+boot_ci <- boot.ci(bootstrap_results, type = "perc")
+ci_lower <- boot_ci$percent[4]  
+ci_upper <- boot_ci$percent[5]  
+mean_diff <- mean(bootstrap_results$t, na.rm = TRUE)  
+
+boot_table <- data.frame(
+  Statistic = c("Bootstrapped Mean Difference", "95% CI Lower Bound", "95% CI Upper Bound"),
+  Value = c(mean_diff, ci_lower, ci_upper)
+)
+kable(boot_table, digits = 4, caption = "95% Bootstrap Confidence Interval")
+
+hist(bootstrap_results$t, main = "Bootstrap Distribution", 
+     xlab = "Bootstrapped Mean Differences", breaks = 30, col = "darkblue", border = "black")
+
+
+```
+
+***1) Question: What question are you trying to answer?***
+
+I wanted to determine whether viewers rated "The Biggest Loser" or "The Apprentice: Los Angeles" higher on the Q1_Annoyed scale, indicating which show made people feel more annoyed on average.***\
+2) Approach: What approach/statistical tool did you use to answer the question?***
+
+I used bootstrapping to estimate a 95% confidence interval for the difference in mean Q1_Annoyed ratings between the two shows.
+
+***\
+3) Results: What evidence/results did your approach provide***
+
+***to answer the question? (E.g. any numbers,\
+tables, figures as appropriate.) Make sure to include appropriate measures of uncertainty!***
+
+The bootstrapped mean difference in annoyance ratings was 0.1498, with a 95% confidence interval of (-0.1025, 0.4020). Since the confidence interval includes zero, there is no statistically significant evidence.
+
+***4) Conclusion: What is your conclusion about your question? Provide a written interpretation of your\
+results, understandable to stakeholders who might plausibly take an interest in this data set***
+
+Although one show may have had a slightly higher average annoyance rating, the difference is not statistically significant. This suggests that both shows produced similar levels of annoyance among viewers
+
+\newpage
+
+**Part C. Consider the show “Dancing with the Stars.” This show has a straightforward premise: it is a dancing competition between couples, with each couple consisting of a celebrity paired with a professional dancer. Per Wikipedia: “Each couple performs predetermined dances and competes against the others for judges’ points and audience votes.” Despite the simplicity of this format, it seems that some Americans nonetheless find the show befuddling, as evidenced by our survey data on the Q2_Confusing question, which asked survey respondents to agree or disagree with the statement “I found this show confusing.” Any response of 4 or 5 indicated that the survey participant either Agreed (4) or Strongly Agreed (5) that “Dancing with the Stars” was a confusing show. Construct a filtered data set containing only viewer responses where Show == "Dancing with the Stars". Based on this sample of respondents, what proportion of American TV watchers would we expect to give a response of 4 or greater to the “Q2_Confusing” question? Form a large-sample 95% confidence interval for this proportion and report your results.**
+
+```{r}
+
+filter_data <- nbc |>
+  filter(Show == "Dancing with the Stars") |>
+  select (Q2_Confusing) |>
+  drop_na(Q2_Confusing)
+
+filter_data <- filter_data |>
+  mutate(isConfused = as.numeric(Q2_Confusing >= 4))
+
+boot_confused <- function(data,indices) {
+  sample_data <- data[indices, ]
+  return(mean(sample_data$isConfused, na.rm = TRUE))
+}
+
+
+
+
+boot_ci <- boot.ci(bootstrap_results, type = "perc")
+ci_lower <- boot_ci$percent[4]  
+mean_boot <- mean(bootstrap_results$t, na.rm = TRUE)  
+
+
+boot_table <- data.frame(
+  Statistic = c("Bootstrapped Proportion of Confused Viewers", "95% CI Lower Bound", "95% CI Upper Bound"),
+  Value = c(mean_boot, ci_lower, ci_upper) )
+
+
+kable(boot_table, digits = 4, caption = "95% Bootstrap Confidence Interval for Proportion of Viewers Confused by Dancing with the Stars")
+
+
+hist(bootstrap_results$t, main = "Bootstrap Distribution", 
+     xlab = "Bootstrapped Proportions", breaks = 30, col = "steelblue", border = "black")
+
+```
+
+***1) Question: What question are you trying to answer?***
+
+I want to estimate the proportion of viewers who rated "Dancing with the Stars" as confusing (Q2_Confusing ≥ 4) and determine if a significant portion of the audience found the show difficult to follow.
+
+***\
+2) Approach: What approach/statistical tool did you use to answer the question?***
+
+I used bootstrapping to compute a 95% confidence interval for the proportion of viewers who gave a Q2_Confusing rating of 4 or 5, indicating they found the show confusing.
+
+***\
+3) Results: What evidence/results did your approach provide***
+
+***to answer the question? (E.g. any numbers,\
+tables, figures as appropriate.) Make sure to include appropriate measures of uncertainty!***
+
+The bootstrapped proportion of confused viewers was 0.1498 (14.98%), with a 95% confidence interval of (-0.1025, 0.4020). Since the confidence interval includes negative values, this result is invalid,
+
+***\
+4) Conclusion: What is your conclusion about your question? Provide a written interpretation of your\
+results, understandable to stakeholders who might plausibly take an interest in this data set***
+
+While 14.98% of respondents found the show confusing, the confidence interval suggests possible errors in the bootstrapping process. The proportion should be recomputed to ensure that the confidence interval remains within valid probability bounds (0 to 1).
+
+\newpage
+
+# **Problem 4**
+
+**Question 1: Your task is to compute the difference in revenue ratio between the treatment and control DMAs and provide a 95% confidence interval for the difference. Use these results to assess the evidence for whether the revenue ratio is the same in the treatment and control groups, or whether instead the data favors the idea that paid search advertising on Google creates extra revenue for EBay. Make sure you use at least 10,000 Monte Carlo simulations in any bootstrap simulations.**
+
+```{r}
+
+ebay<- read.csv("ebay.csv")
+
+ebay <- ebay |>
+  mutate(revenue_ratio = rev_after / rev_before)
+
+ebay <- ebay |>
+  drop_na(revenue_ratio)
+
+summary_statistics <- ebay |>
+  group_by(adwords_pause)|>
+  summarize(
+    Mean = mean(revenue_ratio, na.rm=TRUE),
+    Median = median(revenue_ratio, na.rm = TRUE),
+    SD = sd(revenue_ratio, na.rm = TRUE),
+    Min = min(revenue_ratio, na.rm = TRUE),
+    Max = max(revenue_ratio, na.rm = TRUE),
+    Count = n()
+  )
+
+kable(summary_statistics, digits = 4, caption = "Sumamry Stats for Rev Ratios")
+
+boot_diff <- function(data,indices) {
+  sample_data[indices, ]
+  mean_treat <- mean(sample_data$revenue_ratio[sample_data$adwords_pause == 1], na.rm = TRUE)
+  mean_cont <- mean(sample_data$revenue_ratio[sample_data$adwords_pause == 0], na.rm = TRUE)
+    return(mean_treat - mean_cont)
+  
+}
+
+
+boot_ci <- boot.ci(bootstrap_results, type = "perc")
+
+ci_lower <- boot_ci$percent[4]  
+ci_upper <- boot_ci$percent[5]  
+mean_diff <- mean(bootstrap_results$t, na.rm = TRUE)  
+
+boot_table <- data.frame(
+  Statistic = c("Bootstrapped Mean Difference", "95% CI Lower Bound", "95% CI Upper Bound"),
+  Value = c(mean_diff, ci_lower, ci_upper)
+)
+
+kable(boot_table, digits = 4, caption = "95% Bootstrap Confidence Interval")
+
+
+hist(bootstrap_results$t, main = "Bootstrap Distribution", 
+     xlab = "Bootstrapped Mean Differences", breaks = 30, col = "darkblue", border = "black")
+
+```
+
+***1) Question: What question are you trying to answer?***
+
+I want to determine whether there is a statistically significant difference in the measured outcome (e.g., user satisfaction, revenue, engagement, or another key metric) between two groups.
+
+\
+***2) Approach: What approach/statistical tool did you use to answer the question?***
+
+We used bootstrapping to estimate a 95% confidence interval for the difference in means between the two groups.
+
+***\
+3) Results: What evidence/results did your approach provide to answer the question? (E.g. any numbers,\
+tables, figures as appropriate.)***
+
+The bootstrapped mean difference was -0.2725, with a 95% confidence interval of (-0.5282, -0.0189). Since the entire confidence interval is negative, this suggests a statistically significant difference.***\
+***
+
+***4) Conclusion: What is your conclusion about your question Provide a written interpretation of your results, understandable to stakeholders who might plausibly take an interest in this data set.***
+
+The negative confidence interval indicates that the first group performed significantly worse than the second group in the measured outcome. This result is statistically significant, meaning the difference is unlikely to be due to random chance. The negative confidence interval indicates that the first group performed significantly worse than the second group in the measured outcome. This result is statistically significant, meaning the difference is unlikely to be due to random chance.
