@@ -17,6 +17,8 @@ knitr::opts_chunk$set(echo = FALSE,
                       R.options = list(max.print=50))
 ```
 
+LINK: <https://github.com/kavyamalgi/SDS315HW3.git>
+
 # **Problem 1**
 
 **Which of these theories seem true, and which are unsupported by data? Take each theory one by one and assess the evidence for the theory in this data set.**
